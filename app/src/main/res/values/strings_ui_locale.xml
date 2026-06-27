@@ -58,7 +58,6 @@
     <string name="assistant_detail_prompts_desc">System prompts, quick messages, presets</string>
     <string name="assistant_detail_models">Models</string>
     <string name="assistant_detail_models_desc">Chat model, background model, generation settings</string>
-    <string name="assistant_detail_memory_desc">Memory settings, recent chats, RAG</string>
     <string name="assistant_detail_tools_search">Tools &amp; Search</string>
     <string name="assistant_detail_tools_search_desc">Search providers, local tools, MCP</string>
     <string name="assistant_detail_ui_customization">UI Customization</string>
