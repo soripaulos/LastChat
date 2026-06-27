@@ -37,6 +37,20 @@ jobs:
           npm ci
           npm run build
 
+      # The google-services Gradle plugin requires app/google-services.json to exist,
+      # but the file is gitignored (it lives in local.properties / secrets). For a debug
+      # build that doesn't actually call Firebase APIs, an empty JSON object is sufficient.
+      # If a real GOOGLE_SERVICES_JSON secret is configured on the repo, it overrides this stub.
+      - name: Write stub google-services.json
+        run: |
+          if [ -z "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
+            echo '{}' > app/google-services.json
+            echo "Wrote stub google-services.json (no secret configured)."
+          else
+            echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+            echo "Wrote google-services.json from secret."
+          fi
+
       - name: Gradle cache
         uses: actions/cache@v4
         with:
