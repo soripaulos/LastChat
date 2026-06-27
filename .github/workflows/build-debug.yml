@@ -22,14 +22,20 @@ jobs:
           java-version: '17'
 
       # web-ui is an npm project (LastChat uses npm + package-lock.json, not pnpm).
-      # The :app preBuild task invokes `npm run build` from web-ui/, so Node + npm
-      # must be on PATH for the gradle build to succeed.
+      # We build it in its own step so PATH is correct, then tell Gradle to skip
+      # :app:buildWebUi and use the pre-built artifacts in web-ui/build/client.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: web-ui/package-lock.json
+
+      - name: Build web-ui bundle
+        working-directory: web-ui
+        run: |
+          npm ci
+          npm run build
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -42,10 +48,12 @@ jobs:
       # The debug build type uses the auto-generated debug keystore and the project does not
       # apply the google-services plugin, so no signing secrets or google-services.json are
       # required here (unlike release.yml).
+      # -x :app:buildWebUi skips the in-Gradle npm build because web-ui/ was already built
+      # in the previous step.
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace -x :app:buildWebUi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
