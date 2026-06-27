@@ -1,421 +1,206 @@
 package me.rerere.rikkahub
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
-import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.adaptive.currentWindowDpSize
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.toRoute
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.ui.NavDisplay
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
+import coil3.network.cachecontrol.CacheControlCacheStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
-import coil3.disk.DiskCache
-import coil3.memory.MemoryCache
-import okio.Path.Companion.toOkioPath
-import me.rerere.rikkahub.ui.components.ui.AppToasterHost
-import me.rerere.rikkahub.ui.components.ui.rememberAppToasterState
+import com.dokar.sonner.Toaster
+import com.dokar.sonner.rememberToasterState
 import kotlinx.serialization.Serializable
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.filterNotNull
 import me.rerere.highlight.Highlighter
 import me.rerere.highlight.LocalHighlighter
-import me.rerere.rikkahub.data.datastore.SpontaneousMessagingStateStore
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.DEFAULT_CODEX_PROVIDER_ID
+import me.rerere.rikkahub.data.db.DatabaseMigrationTracker
+import me.rerere.rikkahub.data.db.MigrationState
+import me.rerere.rikkahub.data.event.AppEvent
+import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.ui.activity.SafeModeActivity
 import me.rerere.rikkahub.ui.components.ui.TTSController
-import me.rerere.rikkahub.ui.context.LocalAnimatedVisibilityScope
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalSharedTransitionScope
 import me.rerere.rikkahub.ui.context.LocalTTSState
 import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.rikkahub.ui.context.Navigator
 import me.rerere.rikkahub.ui.hooks.readBooleanPreference
 import me.rerere.rikkahub.ui.hooks.readStringPreference
 import me.rerere.rikkahub.ui.hooks.rememberCustomTtsState
-import me.rerere.rikkahub.ui.motion.LocalMotionPolicy
-import me.rerere.rikkahub.ui.motion.rememberSystemMotionPolicy
-import me.rerere.rikkahub.ui.motion.rootEnterTransition
-import me.rerere.rikkahub.ui.motion.rootExitTransition
-import me.rerere.rikkahub.ui.motion.rootPopEnterTransition
-import me.rerere.rikkahub.ui.motion.rootPopExitTransition
-import me.rerere.rikkahub.ui.motion.lateralEnterTransition
-import me.rerere.rikkahub.ui.motion.lateralExitTransition
-import me.rerere.rikkahub.navigation.CHAT_ROUTE_TARGET_KEY
-import me.rerere.rikkahub.navigation.toChatRouteTarget
-import me.rerere.rikkahub.ui.pages.chat.ChatSessionDraftStore
+import me.rerere.rikkahub.ui.hooks.rememberCustomAsrState
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantRequestPage
 import me.rerere.rikkahub.ui.pages.backup.BackupPage
 import me.rerere.rikkahub.ui.pages.chat.ChatPage
+import me.rerere.rikkahub.ui.pages.debug.DebugPage
 import me.rerere.rikkahub.ui.pages.developer.DeveloperPage
+import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
+import me.rerere.rikkahub.ui.pages.extensions.PromptPage
+import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
+import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
+import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailPage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
+import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
+import me.rerere.rikkahub.ui.pages.history.HistoryPage
 import me.rerere.rikkahub.ui.pages.imggen.ImageGenPage
-import me.rerere.rikkahub.ui.pages.menu.MenuPage
-import me.rerere.rikkahub.ui.pages.onboarding.OnboardingPage
+import me.rerere.rikkahub.ui.pages.log.LogPage
+import me.rerere.rikkahub.ui.pages.search.SearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingAboutPage
-import me.rerere.rikkahub.ui.pages.setting.SettingChatStoragePage
-import me.rerere.rikkahub.ui.pages.setting.SettingDisplayPage
-
+import me.rerere.rikkahub.ui.pages.setting.SettingAccessibilityPage
+import me.rerere.rikkahub.ui.pages.setting.SettingNotificationsPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPermissionsPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesThemePage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNotificationPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesGeneralPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
+import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
+import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
+import me.rerere.rikkahub.ui.pages.setting.SettingFilesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMcpPage
 import me.rerere.rikkahub.ui.pages.setting.SettingModelPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPage
 import me.rerere.rikkahub.ui.pages.setting.SettingProviderDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
+import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
-import me.rerere.rikkahub.ui.pages.setting.SettingTTSProviderDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingTTSPage
+import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
+import me.rerere.rikkahub.ui.pages.setting.SettingTelegramPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
-import me.rerere.rikkahub.ui.pages.setting.SettingRpOptimizationsPage
-import me.rerere.rikkahub.ui.pages.setting.SettingPromptInjectionsPage
-import me.rerere.rikkahub.ui.pages.setting.SettingLorebooksPage
-import me.rerere.rikkahub.ui.pages.setting.SettingLorebookDetailPage
-import me.rerere.rikkahub.ui.pages.setting.SettingSkillsPage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
+import me.rerere.rikkahub.ui.pages.stats.StatsPage
+import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
-import me.rerere.rikkahub.ui.pages.setting.SettingAndroidIntegrationPage
-import me.rerere.rikkahub.ui.pages.setting.SettingUICustomizationPage
-import me.rerere.rikkahub.ui.pages.setting.SettingFontsPage
-import me.rerere.rikkahub.ui.pages.setting.AdaptiveSettingsScaffold
-import me.rerere.rikkahub.ui.pages.setting.SettingsDestination
-import me.rerere.rikkahub.share.ResolvedSharePayload
-import me.rerere.rikkahub.share.readResolvedSharePayload
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
-import me.rerere.rikkahub.service.EXTRA_IS_SPONTANEOUS_NOTIFICATION
-import me.rerere.rikkahub.service.EXTRA_SPONTANEOUS_EVENT_ID
-import me.rerere.rikkahub.service.EXTRA_SPONTANEOUS_MESSAGE
-import me.rerere.rikkahub.service.EXTRA_SPONTANEOUS_RELATION
-import me.rerere.rikkahub.service.ChatPersistenceMode
-import me.rerere.rikkahub.ui.activity.QuickAskContinuationData
-import me.rerere.rikkahub.ui.activity.buildQuickAskMessageParts
-import me.rerere.rikkahub.ui.activity.readQuickAskContinuationData
-import me.rerere.rikkahub.utils.navigateToChatPage
+import me.rerere.rikkahub.utils.CrashHandler
 import okhttp3.OkHttpClient
 import org.koin.android.ext.android.inject
-import me.rerere.rikkahub.utils.fileSizeToString
+import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
 
-internal data class SpontaneousNotificationData(
-    val assistantId: String,
-    val conversationId: String?,
-    val eventId: String,
-    val message: String,
-    val relation: me.rerere.rikkahub.service.SpontaneousMessageRelation,
-)
-
-internal data class ResolvedSpontaneousChatTarget(
-    val conversationId: Uuid,
-    val persistenceMode: ChatPersistenceMode,
-    val assistantId: Uuid,
-    val focusLatestMessageKey: String? = null,
-)
-
-internal fun resolveSpontaneousNotificationRelation(
-    relationExtra: String?,
-    conversationId: String?,
-): me.rerere.rikkahub.service.SpontaneousMessageRelation {
-    return me.rerere.rikkahub.service.SpontaneousMessageRelation.fromWireValue(relationExtra)
-        ?: if (conversationId.isNullOrBlank()) {
-            me.rerere.rikkahub.service.SpontaneousMessageRelation.UNRELATED
-        } else {
-            me.rerere.rikkahub.service.SpontaneousMessageRelation.RECENT_CHAT
-        }
-}
-
-internal suspend fun resolveSpontaneousNotificationTarget(
-    data: SpontaneousNotificationData,
-    isEventConsumed: (String) -> Boolean,
-    getConsumedTarget: (String) -> ResolvedSpontaneousChatTarget?,
-    updateAssistantSelection: suspend (Uuid) -> Unit,
-    hasConversation: suspend (Uuid) -> Boolean,
-    appendToConversation: suspend (Uuid, String, Uuid) -> Uuid?,
-    seedDraftConversation: suspend (Uuid, String, Uuid?) -> Uuid?,
-    markEventConsumed: (String, ResolvedSpontaneousChatTarget) -> Unit,
-): ResolvedSpontaneousChatTarget? {
-    val assistantId = runCatching { Uuid.parse(data.assistantId) }.getOrNull() ?: return null
-    val message = data.message.trim()
-    if (message.isBlank()) return null
-
-    getConsumedTarget(data.eventId)?.let { consumedTarget ->
-        updateAssistantSelection(consumedTarget.assistantId)
-        if (consumedTarget.persistenceMode != ChatPersistenceMode.NORMAL) {
-            seedDraftConversation(
-                consumedTarget.assistantId,
-                message,
-                consumedTarget.conversationId,
-            ) ?: return null
-        } else if (!hasConversation(consumedTarget.conversationId)) {
-            return null
-        }
-        return consumedTarget.copy(focusLatestMessageKey = data.eventId)
-    }
-
-    if (isEventConsumed(data.eventId)) {
-        val conversationId = data.conversationId
-            ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
-            ?.takeIf { data.relation == me.rerere.rikkahub.service.SpontaneousMessageRelation.RECENT_CHAT }
-            ?.takeIf { hasConversation(it) }
-            ?: return null
-        updateAssistantSelection(assistantId)
-        return ResolvedSpontaneousChatTarget(
-            conversationId = conversationId,
-            persistenceMode = ChatPersistenceMode.NORMAL,
-            assistantId = assistantId,
-            focusLatestMessageKey = data.eventId,
-        )
-    }
-
-    updateAssistantSelection(assistantId)
-
-    val originalConversationId = data.conversationId?.let { raw ->
-        runCatching { Uuid.parse(raw) }.getOrNull()
-    }
-
-    val target = when (data.relation) {
-        me.rerere.rikkahub.service.SpontaneousMessageRelation.RECENT_CHAT -> {
-            val existingConversationId = if (
-                originalConversationId != null &&
-                hasConversation(originalConversationId)
-            ) {
-                appendToConversation(assistantId, message, originalConversationId)
-            } else {
-                null
-            }
-            val conversationId = existingConversationId
-                ?: seedDraftConversation(assistantId, message, null)
-                ?: return null
-            ResolvedSpontaneousChatTarget(
-                conversationId = conversationId,
-                persistenceMode = if (existingConversationId != null) {
-                    ChatPersistenceMode.NORMAL
-                } else {
-                    ChatPersistenceMode.PERSIST_ON_REPLY
-                },
-                assistantId = assistantId,
-                focusLatestMessageKey = data.eventId,
-            )
-        }
-
-        me.rerere.rikkahub.service.SpontaneousMessageRelation.UNRELATED -> {
-            val conversationId = seedDraftConversation(assistantId, message, null) ?: return null
-            ResolvedSpontaneousChatTarget(
-                conversationId = conversationId,
-                persistenceMode = ChatPersistenceMode.PERSIST_ON_REPLY,
-                assistantId = assistantId,
-                focusLatestMessageKey = data.eventId,
-            )
-        }
-    }
-
-    markEventConsumed(data.eventId, target)
-    return target
-}
-
-internal fun determineInitialChatScreen(
-    defaultScreen: Screen.Chat,
-    deepLinkedConversationId: String?,
-    spontaneousTarget: ResolvedSpontaneousChatTarget?,
-): Screen.Chat {
-    return when {
-        spontaneousTarget != null -> spontaneousTarget.toScreen()
-        !deepLinkedConversationId.isNullOrBlank() -> Screen.Chat(id = deepLinkedConversationId)
-        else -> defaultScreen
-    }
-}
-
-private fun isSettingsPaneRoute(route: String?): Boolean {
-    return route != null && (
-        route.contains("Setting") ||
-            route.contains("Assistant") ||
-            route.contains("Backup")
-        )
-}
-
-private fun ResolvedSpontaneousChatTarget.toScreen(): Screen.Chat {
-    return Screen.Chat(
-        id = conversationId.toString(),
-        persistenceMode = persistenceMode.routeValue.takeIf { persistenceMode != ChatPersistenceMode.NORMAL },
-        focusLatestMessageKey = focusLatestMessageKey,
-    )
-}
-
-private fun me.rerere.rikkahub.data.datastore.ConsumedSpontaneousEventRecord.toResolvedSpontaneousTarget(): ResolvedSpontaneousChatTarget? {
-    val conversationId = conversationId
-        ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
-        ?: return null
-    val assistantId = assistantId
-        ?.let { raw -> runCatching { Uuid.parse(raw) }.getOrNull() }
-        ?: return null
-    val persistenceMode = ChatPersistenceMode.fromRouteValue(persistenceMode)
-        ?: ChatPersistenceMode.NORMAL
-    return ResolvedSpontaneousChatTarget(
-        conversationId = conversationId,
-        persistenceMode = persistenceMode,
-        assistantId = assistantId,
-    )
-}
-
 class RouteActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_CODEX_SETTINGS = "open_codex_settings"
+        const val EXTRA_OPEN_MCP_SETTINGS = "open_mcp_settings"
+    }
+
     private val highlighter by inject<Highlighter>()
     private val okHttpClient by inject<OkHttpClient>()
     private val settingsStore by inject<SettingsStore>()
-    private val spontaneousMessagingStateStore by inject<SpontaneousMessagingStateStore>()
-    private val chatService by inject<me.rerere.rikkahub.service.ChatService>()
-    private val conversationRepo by inject<me.rerere.rikkahub.data.repository.ConversationRepository>()
-    private var navStack by mutableStateOf<NavHostController?>(null)
-    private var pendingTextSelection by mutableStateOf<QuickAskContinuationData?>(null)
-    private var pendingConversationId by mutableStateOf<String?>(null)
-    private var pendingResolvedSpontaneousTarget by mutableStateOf<ResolvedSpontaneousChatTarget?>(null)
-    private var pendingShareIntent by mutableStateOf<ResolvedSharePayload?>(null)
-    private var initialChatScreen by mutableStateOf<Screen.Chat?>(null)
-    private var hasSuccessfulReplyBeforeSetup by mutableStateOf<Boolean?>(null)
+    private var navStack: MutableList<NavKey>? = null
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        try {
-            enableEdgeToEdge()
-            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-            disableNavigationBarContrast()
-            super.onCreate(savedInstanceState)
-            lifecycleScope.launch {
-                hasSuccessfulReplyBeforeSetup = withContext(Dispatchers.IO) {
-                    conversationRepo.hasSuccessfulAssistantReply()
-                }
-            }
-            
-            // Track app launch and initialize usage stats
-            lifecycleScope.launch(Dispatchers.IO) {
-                kotlinx.coroutines.delay(1500)
-                runCatching { conversationRepo.initUsageStats() }
-                    .onFailure { android.util.Log.e(TAG, "initUsageStats failed", it) }
-                runCatching { conversationRepo.backfillDailyActivityFromConversationHistoryIfNeeded() }
-                    .onFailure { android.util.Log.e(TAG, "daily activity backfill failed", it) }
-                runCatching { conversationRepo.backfillUsageStatsFromHistoryIfNeeded() }
-                    .onFailure { android.util.Log.e(TAG, "usage stats backfill failed", it) }
-                runCatching { conversationRepo.incrementAppLaunches() }
-                    .onFailure { android.util.Log.e(TAG, "increment app launches failed", it) }
-            }
-            
-            val spontaneousNotification = intent.toSpontaneousNotificationData()
-            val intentAssistantId = if (spontaneousNotification == null) intent?.getStringExtra("assistantId") else null
-            val intentConversationId = if (spontaneousNotification == null) intent?.getStringExtra("conversationId") else null
-            val intentWebServerSettings = intent?.getBooleanExtra("webServerSettings", false) == true
-            pendingTextSelection = intent?.readQuickAskContinuationData()
-            pendingShareIntent = intent?.readResolvedSharePayload()
-            lifecycleScope.launch {
-                initialChatScreen = determineInitialChatScreen(
-                    defaultScreen = defaultStartScreen(),
-                    deepLinkedConversationId = intentConversationId,
-                    spontaneousTarget = spontaneousNotification?.let { resolveSpontaneousChatTarget(it) },
-                )
-            }
+    // Volume key listener registry — last registered handler wins
+    internal val volumeKeyListeners = mutableListOf<(isVolumeUp: Boolean) -> Boolean>()
 
-            setContent {
-                val navStack = rememberNavController()
-                this.navStack = navStack
-                RikkahubTheme {
-                    val startScreen = initialChatScreen
-                    setSingletonImageLoaderFactory { context ->
-                        ImageLoader.Builder(context)
-                            .crossfade(true)
-                            .memoryCache {
-                                MemoryCache.Builder()
-                                    .maxSizePercent(context, 0.25) // Use 25% of app's memory for image cache
-                                    .build()
-                            }
-                            .diskCache {
-                                DiskCache.Builder()
-                                    .directory(context.filesDir.resolve("icon_cache").toOkioPath())
-                                    .maxSizeBytes(50 * 1024 * 1024) // 50 MB persistent disk cache for icons
-                                    .build()
-                            }
-                            .components {
-                                add(OkHttpNetworkFetcherFactory(callFactory = { okHttpClient }))
-                                add(SvgDecoder.Factory(scaleToDensity = true))
-                            }
-                            .build()
-                    }
-                    if (startScreen == null) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(MaterialTheme.colorScheme.background)
-                        )
-                    } else {
-                        val context = LocalContext.current
-                        ShareHandler(navStack)
-                        TextSelectionHandler(navStack)
-                        NotificationHandler(navStack)
-                        AppRoutes(navStack, startScreen)
-                        
-                        LaunchedEffect(intentWebServerSettings) {
-                            if (intentWebServerSettings) {
-                                navStack.navigate(Screen.SettingWeb)
-                            }
-                        }
-                    }
-                }
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val isVolumeUp = when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> true
+                KeyEvent.KEYCODE_VOLUME_DOWN -> false
+                else -> return super.dispatchKeyEvent(event)
             }
-            
-            // Handle assistant shortcut - navigate directly by waiting for navStack to be ready
-            if (intentAssistantId != null) {
-                lifecycleScope.launch {
-                    // Wait for navStack to be ready (set in composition)
-                    while (navStack == null) {
-                        kotlinx.coroutines.delay(50)
-                    }
-                    try {
-                        val assistantId = Uuid.parse(intentAssistantId)
-                        // Update the selected assistant
-                        settingsStore.updateAssistant(assistantId)
-                        // Mark as recently used
-                        settingsStore.markAssistantUsed(assistantId)
-                        // Navigate to a new chat
-                        navStack?.let { navigateToChatPage(it, chatId = Uuid.random()) }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "Fatal error in RouteActivity.onCreate", e)
+            if (volumeKeyListeners.lastOrNull()?.invoke(isVolumeUp) == true) return true
         }
+        return super.dispatchKeyEvent(event)
     }
 
-    override fun onDestroy() {
-        if (!isChangingConfigurations) {
-            ChatSessionDraftStore.clear()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
+        disableNavigationBarContrast()
+        super.onCreate(savedInstanceState)
+        if (CrashHandler.hasCrashed(this)) {
+            startActivity(Intent(this, SafeModeActivity::class.java))
+            finish()
+            return
         }
-        super.onDestroy()
+        setContent {
+            RikkahubTheme {
+                @OptIn(coil3.annotation.ExperimentalCoilApi::class)
+                setSingletonImageLoaderFactory { context ->
+                    ImageLoader.Builder(context)
+                        .crossfade(true)
+                        .components {
+                            add(OkHttpNetworkFetcherFactory(
+                                callFactory = { okHttpClient },
+                                cacheStrategy = { CacheControlCacheStrategy() },
+                            ))
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                add(AnimatedImageDecoder.Factory())
+                            } else {
+                                add(GifDecoder.Factory())
+                            }
+                            add(SvgDecoder.Factory(scaleToDensity = true))
+                        }
+                        .build()
+                }
+                AppRoutes()
+            }
+        }
     }
 
     private fun disableNavigationBarContrast() {
@@ -424,8 +209,73 @@ class RouteActivity : ComponentActivity() {
         }
     }
 
-    private fun defaultStartScreen(): Screen.Chat {
-        return Screen.Chat(
+    @Composable
+    private fun ShareHandler(backStack: MutableList<NavKey>) {
+        val shareIntent = remember {
+            Intent().apply {
+                action = intent?.action
+                putExtra(Intent.EXTRA_TEXT, intent?.getStringExtra(Intent.EXTRA_TEXT))
+                putExtra(Intent.EXTRA_STREAM, intent?.getStringExtra(Intent.EXTRA_STREAM))
+                putExtra(Intent.EXTRA_PROCESS_TEXT, intent?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT))
+            }
+        }
+
+        LaunchedEffect(backStack) {
+            when (shareIntent.action) {
+                Intent.ACTION_SEND -> {
+                    val text = shareIntent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+                    val imageUri = shareIntent.getStringExtra(Intent.EXTRA_STREAM)
+                    backStack.add(Screen.ShareHandler(text, imageUri))
+                }
+
+                Intent.ACTION_PROCESS_TEXT -> {
+                    val text = shareIntent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString() ?: ""
+                    backStack.add(Screen.ShareHandler(text, null))
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_OPEN_CODEX_SETTINGS, false)) {
+            val destination = Screen.SettingProviderDetail(DEFAULT_CODEX_PROVIDER_ID.toString())
+            navStack?.let { stack ->
+                if (stack.lastOrNull() != destination) stack.add(destination)
+            }
+            intent.removeExtra(EXTRA_OPEN_CODEX_SETTINGS)
+        }
+        if (intent.getBooleanExtra(EXTRA_OPEN_MCP_SETTINGS, false)) {
+            navStack?.let { stack ->
+                if (stack.lastOrNull() != Screen.SettingMcp) stack.add(Screen.SettingMcp)
+            }
+            intent.removeExtra(EXTRA_OPEN_MCP_SETTINGS)
+        }
+        // Navigate to the chat screen if a conversation ID is provided
+        intent.getStringExtra("conversationId")?.let { text ->
+            navStack?.add(Screen.Chat(text))
+        }
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Composable
+    fun AppRoutes() {
+        val toastState = rememberToasterState()
+        val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
+        val tts = rememberCustomTtsState()
+        val asr = rememberCustomAsrState()
+        val eventBus = koinInject<AppEventBus>()
+        LaunchedEffect(tts) {
+            eventBus.events.collect { event ->
+                when (event) {
+                    is AppEvent.Speak -> tts.speak(event.text)
+                }
+            }
+        }
+        val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
+
+        val startScreen = Screen.Chat(
             id = if (readBooleanPreference("create_new_conversation_on_start", true)) {
                 Uuid.random().toString()
             } else {
@@ -435,889 +285,431 @@ class RouteActivity : ComponentActivity() {
                 ) ?: Uuid.random().toString()
             }
         )
-    }
 
-    private fun Intent?.toSpontaneousNotificationData(): SpontaneousNotificationData? {
-        if (this == null || !getBooleanExtra(EXTRA_IS_SPONTANEOUS_NOTIFICATION, false)) {
-            return null
-        }
+        val backStack = rememberNavBackStack(startScreen)
+        SideEffect { this@RouteActivity.navStack = backStack }
 
-        val assistantId = getStringExtra("assistantId") ?: return null
-        val eventId = getStringExtra(EXTRA_SPONTANEOUS_EVENT_ID) ?: return null
-        val message = getStringExtra(EXTRA_SPONTANEOUS_MESSAGE) ?: return null
-        val conversationId = getStringExtra("conversationId")
-        val relation = resolveSpontaneousNotificationRelation(
-            relationExtra = getStringExtra(EXTRA_SPONTANEOUS_RELATION),
-            conversationId = conversationId,
-        )
-
-        return SpontaneousNotificationData(
-            assistantId = assistantId,
-            conversationId = conversationId,
-            eventId = eventId,
-            message = message,
-            relation = relation,
-        )
-    }
-
-    @Composable
-    private fun ShareHandler(navBackStack: NavHostController) {
-        val shareData = pendingShareIntent
-        LaunchedEffect(navBackStack, shareData) {
-            val currentShareData = shareData ?: return@LaunchedEffect
-            pendingShareIntent = null
-            runCatching {
-                navBackStack.navigate(
-                    Screen.ShareHandler(
-                        text = currentShareData.text,
-                        files = currentShareData.attachmentUris()
-                    )
-                )
-            }.onFailure { throwable ->
-                android.util.Log.e(TAG, "Share navigation failed", throwable)
-                navBackStack.navigate(
-                    Screen.ShareHandler(
-                        text = currentShareData.text,
-                        files = currentShareData.attachmentUris()
-                    )
-                )
+        LaunchedEffect(backStack) {
+            if (intent.getBooleanExtra(EXTRA_OPEN_CODEX_SETTINGS, false)) {
+                val destination = Screen.SettingProviderDetail(DEFAULT_CODEX_PROVIDER_ID.toString())
+                if (backStack.lastOrNull() != destination) backStack.add(destination)
+                intent.removeExtra(EXTRA_OPEN_CODEX_SETTINGS)
+            }
+            if (intent.getBooleanExtra(EXTRA_OPEN_MCP_SETTINGS, false)) {
+                if (backStack.lastOrNull() != Screen.SettingMcp) backStack.add(Screen.SettingMcp)
+                intent.removeExtra(EXTRA_OPEN_MCP_SETTINGS)
             }
         }
-    }
 
-    @Composable
-    private fun NotificationHandler(navBackStack: NavHostController) {
-        val spontaneousTarget = pendingResolvedSpontaneousTarget
-        val conversationIdStr = pendingConversationId
-        LaunchedEffect(spontaneousTarget, conversationIdStr) {
-            if (spontaneousTarget != null) {
-                pendingResolvedSpontaneousTarget = null
-                navigateToChatPage(
-                    navController = navBackStack,
-                    chatId = spontaneousTarget.conversationId,
-                    persistenceMode = spontaneousTarget.persistenceMode.routeValue
-                        .takeIf { spontaneousTarget.persistenceMode != ChatPersistenceMode.NORMAL },
-                    focusLatestMessageKey = spontaneousTarget.focusLatestMessageKey,
-                )
-            } else if (conversationIdStr != null) {
-                pendingConversationId = null
-                runCatching { Uuid.parse(conversationIdStr) }
-                    .getOrNull()
-                    ?.let { conversationId ->
-                        navigateToChatPage(navBackStack, chatId = conversationId)
-                    }
-            }
-        }
-    }
+        ShareHandler(backStack)
 
-    private suspend fun resolveSpontaneousChatTarget(
-        data: SpontaneousNotificationData,
-    ): ResolvedSpontaneousChatTarget? {
-        return resolveSpontaneousNotificationTarget(
-            data = data,
-            isEventConsumed = spontaneousMessagingStateStore::isEventConsumed,
-            getConsumedTarget = { eventId ->
-                spontaneousMessagingStateStore.getConsumedEventRecord(eventId)
-                    ?.toResolvedSpontaneousTarget()
-            },
-            updateAssistantSelection = { assistantId ->
-                settingsStore.updateAssistant(assistantId)
-                settingsStore.markAssistantUsed(assistantId)
-            },
-            hasConversation = { conversationId ->
-                conversationRepo.getConversationById(conversationId) != null
-            },
-            appendToConversation = { assistantId, message, conversationId ->
-                chatService.persistSpontaneousAssistantMessage(
-                    assistantId = assistantId,
-                    content = message,
-                    conversationId = conversationId,
-                ).id
-            },
-            seedDraftConversation = { assistantId, message, conversationId ->
-                chatService.seedSpontaneousDraftConversation(
-                    assistantId = assistantId,
-                    content = message,
-                    conversationId = conversationId ?: Uuid.random(),
-                ).id
-            },
-            markEventConsumed = { eventId, target ->
-                spontaneousMessagingStateStore.markEventConsumed(
-                    eventId = eventId,
-                    conversationId = target.conversationId,
-                    assistantId = target.assistantId,
-                    persistenceMode = target.persistenceMode.routeValue,
-                )
-            },
-        )
-    }
-
-    @Composable
-    private fun TextSelectionHandler(navBackStack: NavHostController) {
-        val data = pendingTextSelection
-        val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
-        
-        
-        LaunchedEffect(data) {
-            if (data != null) {
-                pendingTextSelection = null
-                try {
-                    // Create a new conversation with pre-existing messages
-                    val conversationId = Uuid.random()
-                    
-                    val messages = mutableListOf<me.rerere.rikkahub.data.model.MessageNode>()
-
-                    val userParts = buildQuickAskMessageParts(
-                        text = data.text,
-                        attachments = data.attachments,
-                        customPrompt = data.userPrompt
-                    )
-
-                    if (userParts.isNotEmpty()) {
-                        val userMessage = me.rerere.ai.ui.UIMessage(
-                            role = me.rerere.ai.core.MessageRole.USER,
-                            parts = userParts
-                        )
-                        messages.add(me.rerere.rikkahub.data.model.MessageNode.of(userMessage))
-                    }
-                    
-                    // Add AI response message if available
-                    val aiResponse = data.aiResponse
-                    if (!aiResponse.isNullOrBlank()) {
-                        val assistantMessage = me.rerere.ai.ui.UIMessage.assistant(aiResponse)
-                        messages.add(me.rerere.rikkahub.data.model.MessageNode.of(assistantMessage))
-                    }
-                    
-                    if (messages.isNotEmpty()) {
-                        // Use the assistant from text selection config if available
-                        val assistantId = data.assistantId?.takeIf { it.isNotBlank() }?.let {
-                            try { Uuid.parse(it) } catch (e: Exception) { null }
-                        } ?: settings.assistantId
-                        
-                        // Create the conversation with messages
-                        val conversation = me.rerere.rikkahub.data.model.Conversation.ofId(
-                            id = conversationId,
-                            assistantId = assistantId,
-                            messages = messages
-                        )
-                        
-                        // Save to database
-                        chatService.saveConversation(conversationId, conversation)
-                        
-                        // Navigate to the conversation
-                        navigateToChatPage(navBackStack, chatId = conversationId)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-        }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        android.util.Log.d(TAG, "onNewIntent called")
-        android.util.Log.d(TAG, "Intent extras: conversationId=${intent.getStringExtra("conversationId")}, assistantId=${intent.getStringExtra("assistantId")}")
-        pendingShareIntent = intent.readResolvedSharePayload()
-        pendingTextSelection = intent.readQuickAskContinuationData() ?: pendingTextSelection
-
-        if (intent.getBooleanExtra("webServerSettings", false)) {
-            navStack?.navigate(Screen.SettingWeb)
-            return
-        }
-
-        intent.toSpontaneousNotificationData()?.let { notification ->
-            lifecycleScope.launch {
-                resolveSpontaneousChatTarget(notification)?.let { target ->
-                    if (navStack == null) {
-                        initialChatScreen = target.toScreen()
-                    } else {
-                        pendingResolvedSpontaneousTarget = target
-                    }
-                }
-            }
-            return
-        }
-        
-        // Navigate to the chat screen if a conversation ID is provided
-        intent.getStringExtra("conversationId")?.let { text ->
-            android.util.Log.d(TAG, "Navigating to conversation: $text")
-            runCatching { Uuid.parse(text) }
-                .getOrNull()
-                ?.let { conversationId ->
-                    navStack?.let { navigateToChatPage(it, chatId = conversationId) }
-                }
-        }
-        
-        // Handle assistant shortcut - navigate directly instead of using state
-        intent.getStringExtra("assistantId")?.let { assistantIdStr ->
-            android.util.Log.d(TAG, "Handling assistant shortcut directly: $assistantIdStr")
-            lifecycleScope.launch {
-                try {
-                    val assistantId = Uuid.parse(assistantIdStr)
-                    android.util.Log.d(TAG, "Updating to assistant: $assistantId")
-                    // Update the selected assistant
-                    settingsStore.updateAssistant(assistantId)
-                    // Mark as recently used
-                    settingsStore.markAssistantUsed(assistantId)
-                    // Navigate to a new chat
-                    val newChatId = Uuid.random()
-                    android.util.Log.d(TAG, "Navigating to new chat: $newChatId")
-                    navStack?.let { navigateToChatPage(it, chatId = newChatId) }
-                    android.util.Log.d(TAG, "Navigation complete")
-                } catch (e: Exception) {
-                    android.util.Log.e(TAG, "Error handling assistant shortcut", e)
-                    e.printStackTrace()
-                }
-            }
-        }
-    }
-
-    @Composable
-    fun AppRoutes(navBackStack: NavHostController, startDestination: Screen.Chat) {
-        val toastState = rememberAppToasterState()
-        val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
-        val tts = rememberCustomTtsState()
-        val motionPolicy = rememberSystemMotionPolicy()
         SharedTransitionLayout {
             CompositionLocalProvider(
-                LocalNavController provides navBackStack,
+                LocalNavController provides Navigator(backStack),
                 LocalSharedTransitionScope provides this,
                 LocalSettings provides settings,
                 LocalHighlighter provides highlighter,
-                LocalMotionPolicy provides motionPolicy,
                 LocalToaster provides toastState,
                 LocalTTSState provides tts,
+                LocalASRState provides asr,
             ) {
-                // Check for backup cleanup results and show toast
-                LaunchedEffect(Unit) {
-                    val prefs = this@RouteActivity.getSharedPreferences("backup_cleanup", MODE_PRIVATE)
-                    val unsupportedBytes = prefs.getLong("unsupported_bytes", 0)
-                    val issuesFixed = prefs.getInt("issues_fixed", 0)
-                    val skippedRows = prefs.getInt("db_skipped_rows", 0)
-                    
-                    if (unsupportedBytes > 0 || issuesFixed > 0 || skippedRows > 0) {
-                        // Clear the stored values
-                        prefs.edit().clear().apply()
-                        
-                        // Build cleanup message
-                        val parts = mutableListOf<String>()
-                        if (unsupportedBytes > 0) {
-                            parts.add(
-                                this@RouteActivity.getString(
-                                    R.string.backup_restore_import_cleanup_unsupported,
-                                    unsupportedBytes.fileSizeToString()
-                                )
-                            )
-                        }
-                        if (issuesFixed > 0) {
-                            parts.add(
-                                this@RouteActivity.getString(
-                                    R.string.backup_restore_import_cleanup_invalid_references,
-                                    issuesFixed
-                                )
-                            )
-                        }
-                        if (skippedRows > 0) {
-                            parts.add(
-                                this@RouteActivity.getString(
-                                    R.string.backup_restore_import_cleanup_corrupt_removed,
-                                    skippedRows
-                                )
-                            )
-                        }
-                        
-                        val message = this@RouteActivity.getString(
-                            R.string.backup_restore_import_cleanup_summary,
-                            parts.joinToString(", ")
-                        )
-                        toastState.show(message, type = me.rerere.rikkahub.ui.components.ui.ToastType.Info)
-                    }
-                }
-                Box(modifier = Modifier.fillMaxSize()) {
+                Toaster(
+                    state = toastState,
+                    darkTheme = LocalDarkMode.current,
+                    richColors = true,
+                    alignment = Alignment.TopCenter,
+                    showCloseButton = true,
+                )
                 TTSController()
-                val shouldShowSetup = !settings.init &&
-                    !settings.setupCompleted &&
-                    hasSuccessfulReplyBeforeSetup == false
-                LaunchedEffect(shouldShowSetup) {
-                    if (shouldShowSetup) {
-                        navBackStack.navigate(Screen.Setup) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    }
-                }
-                val actualStartDestination: Screen = if (shouldShowSetup) {
-                    Screen.Setup
-                } else {
-                    startDestination
-                }
-                val windowSize = currentWindowDpSize()
-                val useWideSettingsLayout = windowSize.width >= 840.dp && windowSize.height >= 600.dp
-                NavHost(
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background),
-                    startDestination = actualStartDestination,
-                    navController = navBackStack,
-                    enterTransition = {
-                        if (
-                            useWideSettingsLayout &&
-                            isSettingsPaneRoute(initialState.destination.route) &&
-                            isSettingsPaneRoute(targetState.destination.route)
-                        ) {
-                            EnterTransition.None
-                        } else {
-                            rootEnterTransition(motionPolicy)
-                        }
-                    },
-                    exitTransition = {
-                        if (
-                            useWideSettingsLayout &&
-                            isSettingsPaneRoute(initialState.destination.route) &&
-                            isSettingsPaneRoute(targetState.destination.route)
-                        ) {
-                            ExitTransition.None
-                        } else {
-                            rootExitTransition(motionPolicy)
-                        }
-                    },
-                    popEnterTransition = {
-                        if (
-                            useWideSettingsLayout &&
-                            isSettingsPaneRoute(initialState.destination.route) &&
-                            isSettingsPaneRoute(targetState.destination.route)
-                        ) {
-                            EnterTransition.None
-                        } else {
-                            rootPopEnterTransition(motionPolicy)
-                        }
-                    },
-                    popExitTransition = {
-                        if (
-                            useWideSettingsLayout &&
-                            isSettingsPaneRoute(initialState.destination.route) &&
-                            isSettingsPaneRoute(targetState.destination.route)
-                        ) {
-                            ExitTransition.None
-                        } else {
-                            rootPopExitTransition(motionPolicy)
-                        }
-                    }
+                        .semantics { testTagsAsResourceId = true }
+                        .background(MaterialTheme.colorScheme.background)
                 ) {
-                    composable<Screen.Chat> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.Chat>()
-                        val initialChatTarget = route.toChatRouteTarget()
-                        val activeChatTarget by backStackEntry.savedStateHandle
-                            .getStateFlow(CHAT_ROUTE_TARGET_KEY, initialChatTarget)
-                            .collectAsStateWithLifecycle()
-                        ChatPage(
-                            target = activeChatTarget,
-                        )
-                    }
+                    NavDisplay(
+                        backStack = backStack,
+                        entryDecorators = listOf(
+                            rememberSaveableStateHolderNavEntryDecorator(),
+                            rememberViewModelStoreNavEntryDecorator(),
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                        onBack = { backStack.removeLastOrNull() },
+                        transitionSpec = {
+                            if (backStack.size == 1) fadeIn() togetherWith fadeOut()
+                            else {
+                                slideInHorizontally { it } togetherWith
+                                    slideOutHorizontally { -it / 2 } + scaleOut(targetScale = 0.7f) + fadeOut()
+                            }
+                        },
+                        popTransitionSpec = {
+                            slideInHorizontally { -it / 2 } + scaleIn(initialScale = 0.7f) + fadeIn() togetherWith
+                                slideOutHorizontally { it }
+                        },
+                        predictivePopTransitionSpec = {
+                            slideInHorizontally { -it / 2 } + scaleIn(initialScale = 0.7f) + fadeIn() togetherWith
+                                slideOutHorizontally { it }
+                        },
+                        entryProvider = entryProvider {
+                            entry<Screen.Chat>(
+                                metadata = NavDisplay.transitionSpec { fadeIn() togetherWith fadeOut() }
+                                        + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
+                            ) { key ->
+                                ChatPage(
+                                    id = Uuid.parse(key.id),
+                                    text = key.text,
+                                    files = key.files.map { it.toUri() },
+                                    nodeId = key.nodeId?.let { Uuid.parse(it) }
+                                )
+                            }
 
-                    composable<Screen.ShareHandler> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.ShareHandler>()
-                        ShareHandlerPage(
-                            text = route.text,
-                            files = route.files
-                        )
-                    }
+                            entry<Screen.ShareHandler> { key ->
+                                ShareHandlerPage(
+                                    text = key.text,
+                                    image = key.streamUri
+                                )
+                            }
 
-                    composable<Screen.Setup> {
-                        OnboardingPage()
-                    }
+                            entry<Screen.History> {
+                                HistoryPage()
+                            }
 
+                            entry<Screen.Favorite> {
+                                FavoritePage()
+                            }
 
-
-                    // All assistant-related routes share the same AnimatedVisibilityScope
-                    // for seamless hero animations across all screens
-                    composable<Screen.Assistant> {
-                        CompositionLocalProvider(LocalAnimatedVisibilityScope provides this@composable) {
-                            AdaptiveSettingsScaffold(selected = SettingsDestination.Assistants) {
+                            entry<Screen.Assistant> {
                                 AssistantPage()
                             }
-                        }
-                    }
 
-                    composable<Screen.AssistantDetail> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.AssistantDetail>()
-                        CompositionLocalProvider(LocalAnimatedVisibilityScope provides this@composable) {
-                            AdaptiveSettingsScaffold(selected = SettingsDestination.Assistants) {
-                                AssistantDetailPage(
-                                    id = route.id,
-                                    startRoute = route.startRoute,
-                                    initialMemoryTab = route.initialMemoryTab,
-                                    scrollToMemoryId = route.scrollToMemoryId
-                                )
+                            entry<Screen.AssistantDetail> { key ->
+                                AssistantDetailPage(key.id)
                             }
+
+                            entry<Screen.AssistantBasic> { key ->
+                                AssistantBasicPage(key.id)
+                            }
+
+                            entry<Screen.AssistantPrompt> { key ->
+                                AssistantPromptPage(key.id)
+                            }
+
+                            entry<Screen.AssistantMemory> { key ->
+                                AssistantMemoryPage(key.id)
+                            }
+
+                            entry<Screen.AssistantRequest> { key ->
+                                AssistantRequestPage(key.id)
+                            }
+
+                            entry<Screen.AssistantMcp> { key ->
+                                AssistantMcpPage(key.id)
+                            }
+
+                            entry<Screen.AssistantLocalTool> { key ->
+                                AssistantLocalToolPage(key.id)
+                            }
+
+                            entry<Screen.AssistantInjections> { key ->
+                                AssistantExtensionsPage(key.id)
+                            }
+
+                            entry<Screen.Translator> {
+                                TranslatorPage()
+                            }
+
+                            entry<Screen.Setting> {
+                                SettingPage()
+                            }
+
+                            entry<Screen.Backup> {
+                                BackupPage()
+                            }
+
+                            entry<Screen.ImageGen> {
+                                ImageGenPage()
+                            }
+
+                            entry<Screen.WebView> { key ->
+                                WebViewPage(key.url, key.content)
+                            }
+
+                            entry<Screen.SettingTheme> {
+                                SettingThemePage()
+                            }
+
+                            entry<Screen.SettingPreferences> {
+                                SettingPreferencesPage()
+                            }
+
+                            entry<Screen.SettingPreferencesTheme> {
+                                SettingPreferencesThemePage()
+                            }
+
+                            entry<Screen.SettingPreferencesNotification> {
+                                SettingPreferencesNotificationPage()
+                            }
+
+                            entry<Screen.SettingPreferencesGeneral> {
+                                SettingPreferencesGeneralPage()
+                            }
+
+                            entry<Screen.SettingPreferencesUI> {
+                                SettingPreferencesUIPage()
+                            }
+
+                            entry<Screen.SettingProvider> {
+                                SettingProviderPage()
+                            }
+
+                            entry<Screen.SettingProviderDetail> { key ->
+                                val id = Uuid.parse(key.providerId)
+                                SettingProviderDetailPage(id = id)
+                            }
+
+                            entry<Screen.SettingModels> {
+                                SettingModelPage()
+                            }
+
+                            entry<Screen.SettingAbout> {
+                                SettingAboutPage()
+                            }
+
+                            entry<Screen.SettingSearch> {
+                                SettingSearchPage()
+                            }
+
+                            entry<Screen.SettingTTS> {
+                                SettingTTSPage()
+                            }
+                            entry<Screen.SettingSearchDetail> { key ->
+                                val id = Uuid.parse(key.serviceId)
+                                SettingSearchDetailPage(id)
+                            }
+
+                            entry<Screen.SettingSpeech> {
+                                SettingSpeechPage()
+                            }
+
+                            entry<Screen.SettingMcp> {
+                                SettingMcpPage()
+                            }
+
+                            entry<Screen.SettingDonate> {
+                                SettingDonatePage()
+                            }
+
+                            entry<Screen.SettingFiles> {
+                                SettingFilesPage()
+                            }
+
+                            entry<Screen.SettingWeb> {
+                                SettingWebPage()
+                            }
+
+                            entry<Screen.SettingTelegram> {
+                                SettingTelegramPage()
+                            }
+
+                            entry<Screen.SettingWorkflows> {
+                                me.rerere.rikkahub.workflow.ui.WorkflowsScreen()
+                            }
+
+                            entry<Screen.WorkflowDetail> { key ->
+                                me.rerere.rikkahub.workflow.ui.WorkflowDetailScreen(workflowId = key.id)
+                            }
+
+                            entry<Screen.SettingScheduledJobs> {
+                                me.rerere.rikkahub.ui.pages.setting.scheduledjobs.ScheduledJobsScreen()
+                            }
+
+                            entry<Screen.SettingBrowser> {
+                                me.rerere.rikkahub.ui.pages.setting.browser.SettingBrowserPage()
+                            }
+
+                            entry<Screen.SettingTermux> {
+                                me.rerere.rikkahub.ui.pages.setting.termux.SettingTermuxPage()
+                            }
+
+                            entry<Screen.ScheduledJobDetail> { key ->
+                                me.rerere.rikkahub.ui.pages.setting.scheduledjobs.ScheduledJobDetailScreen(jobId = key.id)
+                            }
+
+                            entry<Screen.SettingDoctor> {
+                                me.rerere.rikkahub.ui.pages.setting.doctor.DoctorScreen()
+                            }
+
+                            entry<Screen.SettingToolApprovals> {
+                                me.rerere.rikkahub.ui.pages.setting.SettingToolApprovalsPage()
+                            }
+
+                            entry<Screen.SettingAccessibility> {
+                                SettingAccessibilityPage()
+                            }
+
+                            entry<Screen.SettingNotifications> {
+                                SettingNotificationsPage()
+                            }
+
+                            entry<Screen.SettingPermissions> {
+                                SettingPermissionsPage()
+                            }
+
+                            entry<Screen.Developer> {
+                                DeveloperPage()
+                            }
+
+                            entry<Screen.Debug> {
+                                DebugPage()
+                            }
+
+                            entry<Screen.Log> {
+                                LogPage()
+                            }
+
+                            entry<Screen.Extensions> {
+                                ExtensionsPage()
+                            }
+
+                            entry<Screen.QuickMessages> {
+                                QuickMessagesPage()
+                            }
+
+                            entry<Screen.Prompts> {
+                                PromptPage()
+                            }
+
+                            entry<Screen.Skills> {
+                                SkillsPage()
+                            }
+
+                            entry<Screen.Workspaces> {
+                                WorkspacePage()
+                            }
+
+                            entry<Screen.WorkspaceDetail> { key ->
+                                WorkspaceDetailPage(key.id)
+                            }
+
+                            entry<Screen.WorkspaceTerminal> { key ->
+                                WorkspaceTerminalPage(key.id)
+                            }
+
+                            entry<Screen.SkillDetail> { key ->
+                                SkillDetailPage(skillName = key.skillName)
+                            }
+
+                            entry<Screen.MessageSearch> {
+                                SearchPage()
+                            }
+
+                            entry<Screen.Stats> {
+                                StatsPage()
+                            }
+
                         }
+                    )
+                    if (BuildConfig.DEBUG) {
+                        Text(
+                            text = "[开发模式]",
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                        )
                     }
-
-                    composable<Screen.Menu> {
-                        MenuPage()
-                    }
-
-                    composable<Screen.Setting> {
-                        AdaptiveSettingsScaffold(
-                            selected = SettingsDestination.Display,
-                            compactContent = { SettingPage() },
+                    AnimatedVisibility(
+                        visible = migrationState is MigrationState.Migrating,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        val state = migrationState as? MigrationState.Migrating
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            SettingDisplayPage()
-                        }
-                    }
-
-                    composable<Screen.Backup> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.Backup>()
-                        val initialTab = me.rerere.rikkahub.ui.pages.backup.BackupTab.fromRoute(route.tab)
-                        AdaptiveSettingsScaffold(
-                            selected = when (initialTab) {
-                                me.rerere.rikkahub.ui.pages.backup.BackupTab.WebDav -> SettingsDestination.BackupWebDav
-                                me.rerere.rikkahub.ui.pages.backup.BackupTab.Local -> SettingsDestination.BackupLocal
-                            }
-                        ) {
-                            BackupPage(initialTab = initialTab)
-                        }
-                    }
-
-                    composable<Screen.BackupWebDav> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.BackupWebDav) {
-                            BackupPage(initialTab = me.rerere.rikkahub.ui.pages.backup.BackupTab.WebDav)
-                        }
-                    }
-
-                    composable<Screen.BackupLocal> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.BackupLocal) {
-                            BackupPage(initialTab = me.rerere.rikkahub.ui.pages.backup.BackupTab.Local)
-                        }
-                    }
-
-                    composable<Screen.ImageGen> {
-                        ImageGenPage()
-                    }
-
-                    composable<Screen.WebView> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.WebView>()
-                        WebViewPage(route.url, route.content)
-                    }
-
-                    composable<Screen.SettingDisplay> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Display) {
-                            SettingDisplayPage()
-                        }
-                    }
-
-                    composable<Screen.SettingProvider>(
-                        enterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                initialState.destination.route?.contains("SettingSearch") == true ||
-                                initialState.destination.route?.contains("SettingTTS") == true
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                lateralEnterTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        exitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                targetState.destination.route?.contains("SettingSearch") == true ||
-                                targetState.destination.route?.contains("SettingTTS") == true
-                            ) {
-                                lateralExitTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popEnterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                initialState.destination.route?.contains("SettingSearch") == true ||
-                                initialState.destination.route?.contains("SettingTTS") == true
-                            ) {
-                                lateralEnterTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popExitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                targetState.destination.route?.contains("SettingSearch") == true ||
-                                targetState.destination.route?.contains("SettingTTS") == true
-                            ) {
-                                lateralExitTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        }
-                    ) {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.ProviderModels) {
-                            SettingProviderPage()
-                        }
-                    }
-
-                    composable<Screen.SettingProviderDetail> {
-                        val route = it.toRoute<Screen.SettingProviderDetail>()
-                        val id = Uuid.parse(route.providerId)
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Providers) {
-                            SettingProviderDetailPage(id = id)
-                        }
-                    }
-
-                    composable<Screen.SettingTTSProviderDetail> {
-                        val route = it.toRoute<Screen.SettingTTSProviderDetail>()
-                        val id = Uuid.parse(route.providerId)
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Tts) {
-                            SettingTTSProviderDetailPage(id = id)
-                        }
-                    }
-
-                    composable<Screen.SettingModels> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Models) {
-                            SettingModelPage()
-                        }
-                    }
-
-                    composable<Screen.SettingAbout> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.About) {
-                            SettingAboutPage()
-                        }
-                    }
-
-                    composable<Screen.SettingChatStorage> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.ChatStorage) {
-                            SettingChatStoragePage()
-                        }
-                    }
-
-                    composable<Screen.SettingSearch>(
-                        enterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingProvider") == true) {
-                                lateralEnterTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else if (initialState.destination.route?.contains("SettingTTS") == true) {
-                                lateralEnterTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        exitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingProvider") == true) {
-                                lateralExitTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else if (targetState.destination.route?.contains("SettingTTS") == true) {
-                                lateralExitTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popEnterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingProvider") == true) {
-                                lateralEnterTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else if (initialState.destination.route?.contains("SettingTTS") == true) {
-                                lateralEnterTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popExitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingProvider") == true) {
-                                lateralExitTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else if (targetState.destination.route?.contains("SettingTTS") == true) {
-                                lateralExitTransition(offset = { -it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        }
-                    ) {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Search) {
-                            SettingProviderPage(initialTab = me.rerere.rikkahub.ui.pages.setting.ProvidersTab.Search)
-                        }
-                    }
-
-                    composable<Screen.SettingTTS>(
-                        enterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                initialState.destination.route?.contains("SettingProvider") == true ||
-                                initialState.destination.route?.contains("SettingSearch") == true
-                            ) {
-                                lateralEnterTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        exitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                targetState.destination.route?.contains("SettingProvider") == true ||
-                                targetState.destination.route?.contains("SettingSearch") == true
-                            ) {
-                                lateralExitTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popEnterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                initialState.destination.route?.contains("SettingProvider") == true ||
-                                initialState.destination.route?.contains("SettingSearch") == true
-                            ) {
-                                lateralEnterTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        },
-                        popExitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (
-                                targetState.destination.route?.contains("SettingProvider") == true ||
-                                targetState.destination.route?.contains("SettingSearch") == true
-                            ) {
-                                lateralExitTransition(offset = { it }, motionPolicy = motionPolicy)
-                            } else {
-                                null
-                            }
-                        }
-                    ) {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Tts) {
-                            SettingProviderPage(initialTab = me.rerere.rikkahub.ui.pages.setting.ProvidersTab.Tts)
-                        }
-                    }
-
-                    composable<Screen.SettingWeb> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Web) {
-                            SettingWebPage()
-                        }
-                    }
-
-                    composable<Screen.SettingMcp> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Mcp) {
-                            SettingMcpPage()
-                        }
-                    }
-
-                    composable<Screen.SettingRpOptimizations> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.RpOptimizations) {
-                            SettingRpOptimizationsPage()
-                        }
-                    }
-
-                    composable<Screen.SettingPromptInjections> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.PromptInjections) {
-                            SettingPromptInjectionsPage()
-                        }
-                    }
-
-                    composable<Screen.SettingLorebooks>(
-                        enterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingSkills") == true) {
-                                lateralEnterTransition(
-                                    offset = { it },
-                                    motionPolicy = motionPolicy
+                                CircularProgressIndicator()
+                                Text(
+                                    text = stringResource(R.string.db_migrating),
+                                    style = MaterialTheme.typography.bodyLarge
                                 )
-                            } else {
-                                null
+                                if (state != null) {
+                                    Text(
+                                        text = "v${state.from} → v${state.to}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
-                        },
-                        exitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingSkills") == true) {
-                                lateralExitTransition(
-                                    offset = { it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        },
-                        popEnterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingSkills") == true) {
-                                lateralEnterTransition(
-                                    offset = { it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        },
-                        popExitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingSkills") == true) {
-                                lateralExitTransition(
-                                    offset = { it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        }
-                    ) {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Lorebooks) {
-                            SettingLorebooksPage()
                         }
                     }
-
-                    composable<Screen.SettingLorebookDetail> { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.SettingLorebookDetail>()
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Lorebooks) {
-                            SettingLorebookDetailPage(id = route.id, scrollToEntryId = route.scrollToEntryId)
-                        }
-                    }
-
-                    composable<Screen.SettingSkills>(
-                        enterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingLorebooks") == true) {
-                                lateralEnterTransition(
-                                    offset = { -it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        },
-                        exitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingLorebooks") == true) {
-                                lateralExitTransition(
-                                    offset = { -it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        },
-                        popEnterTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (initialState.destination.route?.contains("SettingLorebooks") == true) {
-                                lateralEnterTransition(
-                                    offset = { -it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        },
-                        popExitTransition = {
-                            if (useWideSettingsLayout) {
-                                null
-                            } else if (targetState.destination.route?.contains("SettingLorebooks") == true) {
-                                lateralExitTransition(
-                                    offset = { -it },
-                                    motionPolicy = motionPolicy
-                                )
-                            } else {
-                                null
-                            }
-                        }
-                    ) { backStackEntry ->
-                        val route = backStackEntry.toRoute<Screen.SettingSkills>()
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Skills) {
-                            SettingSkillsPage(scrollToSkillId = route.scrollToSkillId)
-                        }
-                    }
-
-                    composable<Screen.Developer> {
-                        DeveloperPage()
-                    }
-
-                    composable<Screen.SettingAndroidIntegration> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.AndroidIntegration) {
-                            SettingAndroidIntegrationPage()
-                        }
-                    }
-
-                    composable<Screen.SettingUICustomization> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.UiCustomization) {
-                            SettingUICustomizationPage()
-                        }
-                    }
-
-                    composable<Screen.SettingFonts> {
-                        AdaptiveSettingsScaffold(selected = SettingsDestination.Fonts) {
-                            SettingFontsPage()
-                        }
-                    }
-
-                }
-                // Toast host must be last so it renders on top of all content
-                AppToasterHost(state = toastState)
                 }
             }
         }
     }
 }
 
-sealed interface Screen {
+sealed interface Screen : NavKey {
     @Serializable
     data class Chat(
         val id: String,
         val text: String? = null,
         val files: List<String> = emptyList(),
-        val searchQuery: String? = null,
-        val persistenceMode: String? = null,
-        val focusLatestMessageKey: String? = null,
+        val nodeId: String? = null
     ) : Screen
 
     @Serializable
-    data class ShareHandler(val text: String, val files: List<String> = emptyList()) : Screen
+    data class ShareHandler(val text: String, val streamUri: String? = null) : Screen
 
     @Serializable
-    data object Setup : Screen
+    data object History : Screen
 
+    @Serializable
+    data object Favorite : Screen
 
     @Serializable
     data object Assistant : Screen
 
     @Serializable
-    data class AssistantDetail(
-        val id: String,
-        val startRoute: String? = null,  // Navigate directly to a sub-route (e.g., "memory")
-        val initialMemoryTab: Int? = null,  // 0 = Core, 1 = Episodic
-        val scrollToMemoryId: Int? = null  // Memory ID to scroll to
-    ) : Screen
+    data class AssistantDetail(val id: String) : Screen
 
     @Serializable
-    data object Menu : Screen
+    data class AssistantBasic(val id: String) : Screen
+
+    @Serializable
+    data class AssistantPrompt(val id: String) : Screen
+
+    @Serializable
+    data class AssistantMemory(val id: String) : Screen
+
+    @Serializable
+    data class AssistantRequest(val id: String) : Screen
+
+    @Serializable
+    data class AssistantMcp(val id: String) : Screen
+
+    @Serializable
+    data class AssistantLocalTool(val id: String) : Screen
+
+    @Serializable
+    data class AssistantInjections(val id: String) : Screen
+
+    @Serializable
+    data object Translator : Screen
 
     @Serializable
     data object Setting : Screen
 
     @Serializable
-    data class Backup(val tab: String = "webdav") : Screen
-
-    @Serializable
-    data object BackupWebDav : Screen
-
-    @Serializable
-    data object BackupLocal : Screen
+    data object Backup : Screen
 
     @Serializable
     data object ImageGen : Screen
@@ -1326,7 +718,22 @@ sealed interface Screen {
     data class WebView(val url: String = "", val content: String = "") : Screen
 
     @Serializable
-    data object SettingDisplay : Screen
+    data object SettingTheme : Screen
+
+    @Serializable
+    data object SettingPreferences : Screen
+
+    @Serializable
+    data object SettingPreferencesTheme : Screen
+
+    @Serializable
+    data object SettingPreferencesNotification : Screen
+
+    @Serializable
+    data object SettingPreferencesGeneral : Screen
+
+    @Serializable
+    data object SettingPreferencesUI : Screen
 
     @Serializable
     data object SettingProvider : Screen
@@ -1335,16 +742,10 @@ sealed interface Screen {
     data class SettingProviderDetail(val providerId: String) : Screen
 
     @Serializable
-    data class SettingTTSProviderDetail(val providerId: String) : Screen
-
-    @Serializable
     data object SettingModels : Screen
 
     @Serializable
     data object SettingAbout : Screen
-
-    @Serializable
-    data object SettingChatStorage : Screen
 
     @Serializable
     data object SettingSearch : Screen
@@ -1353,36 +754,96 @@ sealed interface Screen {
     data object SettingTTS : Screen
 
     @Serializable
-    data object SettingWeb : Screen
+    data class SettingSearchDetail(val serviceId: String) : Screen
+
+    @Serializable
+    data object SettingSpeech : Screen
 
     @Serializable
     data object SettingMcp : Screen
 
     @Serializable
-    data object SettingRpOptimizations : Screen
+    data object SettingDonate : Screen
 
     @Serializable
-    data object SettingPromptInjections : Screen
+    data object SettingFiles : Screen
 
     @Serializable
-    data object SettingLorebooks : Screen
+    data object SettingWeb : Screen
 
     @Serializable
-    data class SettingLorebookDetail(val id: String, val scrollToEntryId: String? = null) : Screen
+    data object SettingTelegram : Screen
+
+    @Serializable
+    data object SettingWorkflows : Screen
+
+    @Serializable
+    data class WorkflowDetail(val id: String) : Screen
+
+    @Serializable
+    data object SettingScheduledJobs : Screen
+
+    @Serializable
+    data object SettingBrowser : Screen
+
+    @Serializable
+    data object SettingTermux : Screen
+
+    @Serializable
+    data class ScheduledJobDetail(val id: String) : Screen
+
+    @Serializable
+    data object SettingDoctor : Screen
+
+    @Serializable
+    data object SettingToolApprovals : Screen
+
+    @Serializable
+    data object SettingAccessibility : Screen
+
+    @Serializable
+    data object SettingNotifications : Screen
+
+    @Serializable
+    data object SettingPermissions : Screen
 
     @Serializable
     data object Developer : Screen
 
     @Serializable
-    data class SettingSkills(val scrollToSkillId: String? = null) : Screen
+    data object Debug : Screen
 
     @Serializable
-    data object SettingAndroidIntegration : Screen
+    data object Log : Screen
 
     @Serializable
-    data object SettingUICustomization : Screen
+    data object Extensions : Screen
 
     @Serializable
-    data object SettingFonts : Screen
+    data object QuickMessages : Screen
+
+    @Serializable
+    data object Prompts : Screen
+
+    @Serializable
+    data object Skills : Screen
+
+    @Serializable
+    data object Workspaces : Screen
+
+    @Serializable
+    data class WorkspaceDetail(val id: String) : Screen
+
+    @Serializable
+    data class WorkspaceTerminal(val id: String) : Screen
+
+    @Serializable
+    data class SkillDetail(val skillName: String) : Screen
+
+    @Serializable
+    data object MessageSearch : Screen
+
+    @Serializable
+    data object Stats : Screen
 
 }
