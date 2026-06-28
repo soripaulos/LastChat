@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.ai.mcp
 
+import android.content.Context
 import android.util.Log
 import io.modelcontextprotocol.kotlin.sdk.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.Implementation
@@ -22,6 +23,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.encodeToJsonElement
 import me.rerere.ai.core.InputSchema
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.ai.mcp.transport.SseClientTransport
@@ -35,8 +39,10 @@ import kotlin.uuid.Uuid
 private const val TAG = "McpManager"
 
 class McpManager(
+    private val context: Context,
     private val settingsStore: SettingsStore,
     private val appScope: AppScope,
+    private val oauthManager: McpOAuthManager,
 ) {
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -77,6 +83,31 @@ class McpManager(
                         it.printStackTrace()
                     }
                 }
+        }
+
+        // Reconnect a server as soon as it finishes OAuth sign-in. This is independent of any
+        // UI being on screen: after the browser hands the user back, the token lands in the
+        // store and McpOAuthManager flips the server's status to Authorized — we pick that up
+        // here and (re)connect with the fresh bearer token. Guarded so an already-connected
+        // server (e.g. after a routine token refresh) isn't needlessly torn down.
+        appScope.launch {
+            oauthManager.status.collect { statuses ->
+                statuses.forEach { (serverId, oauthStatus) ->
+                    if (oauthStatus !is McpOAuthStatus.Authorized) return@forEach
+                    val uuid = runCatching { Uuid.parse(serverId) }.getOrNull() ?: return@forEach
+                    val server = settingsStore.settingsFlow.value.mcpServers.firstOrNull {
+                        it.id == uuid &&
+                            it.commonOptions.enable &&
+                            it.commonOptions.oauth?.enabled == true
+                    } ?: return@forEach
+                    val current = syncingStatus.value[uuid]
+                    if (current == McpStatus.Connected || current == McpStatus.Connecting) return@forEach
+                    appScope.launch {
+                        runCatching { addClient(server) }
+                            .onFailure { Log.w(TAG, "post-oauth connect failed for ${server.commonOptions.name}", it) }
+                    }
+                }
+            }
         }
     }
 
@@ -120,22 +151,47 @@ class McpManager(
         return McpJson.encodeToJsonElement(result.content)
     }
 
-    private fun getTransport(config: McpServerConfig): AbstractTransport = when (config) {
-        is McpServerConfig.SseTransportServer -> {
-            SseClientTransport(
-                urlString = config.url,
-                client = okHttpClient,
-                headers = config.commonOptions.headers,
-            )
-        }
+    // suspend because OAuth-enabled servers need a (possibly refreshed) bearer token resolved
+    // before the transport is built. It throws McpOAuthRequiredException when an oauth-enabled
+    // server has no valid token; the connect/sync paths turn that into an Error status that
+    // prompts the user to sign in from Settings.
+    private suspend fun getTransport(config: McpServerConfig): AbstractTransport {
+        val resolvedHeaders = resolveHeaders(config)
+        return when (config) {
+            is McpServerConfig.SseTransportServer -> {
+                SseClientTransport(
+                    urlString = config.url,
+                    client = okHttpClient,
+                    headers = resolvedHeaders,
+                )
+            }
 
-        is McpServerConfig.StreamableHTTPServer -> {
-            StreamableHttpClientTransport(
-                url = config.url,
-                client = okHttpClient,
-                headers = config.commonOptions.headers.toMap(),
-            )
+            is McpServerConfig.StreamableHTTPServer -> {
+                StreamableHttpClientTransport(
+                    url = config.url,
+                    client = okHttpClient,
+                    headers = resolvedHeaders.toMap(),
+                )
+            }
         }
+    }
+
+    // Combine the user's static headers with an OAuth bearer header when the server opts into
+    // OAuth. A throw here (no valid token) surfaces through addClient/sync as an Error status,
+    // prompting the user to authorize from Settings. A user-supplied Authorization header takes
+    // precedence and disables the automatic bearer to avoid sending two conflicting credentials.
+    private suspend fun resolveHeaders(config: McpServerConfig): List<Pair<String, String>> {
+        val staticHeaders = config.commonOptions.headers
+        val oauth = config.commonOptions.oauth
+        if (oauth?.enabled != true) return staticHeaders
+        if (staticHeaders.any { it.first.equals("Authorization", ignoreCase = true) }) {
+            return staticHeaders
+        }
+        val token = oauthManager.getValidAccessToken(config.id.toString())
+            ?: throw McpOAuthRequiredException(
+                context.getString(R.string.mcp_oauth_authorization_required)
+            )
+        return staticHeaders + ("Authorization" to "Bearer $token")
     }
 
     suspend fun addClient(config: McpServerConfig) = withContext(Dispatchers.IO) {
@@ -259,6 +315,13 @@ class McpManager(
         return syncingStatus.map { it[config.id] ?: McpStatus.Idle }
     }
 }
+
+/**
+ * Thrown while building a transport for an OAuth-enabled server that has no valid access token
+ * (never authorized, or the refresh token was rejected). Caught by the connect/sync paths and
+ * turned into an [McpStatus.Error] so the UI can prompt the user to sign in.
+ */
+class McpOAuthRequiredException(message: String) : Exception(message)
 
 @OptIn(ExperimentalSerializationApi::class)
 internal val McpJson: Json by lazy {

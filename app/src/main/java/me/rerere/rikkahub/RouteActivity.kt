@@ -329,6 +329,7 @@ class RouteActivity : ComponentActivity() {
             val intentAssistantId = if (spontaneousNotification == null) intent?.getStringExtra("assistantId") else null
             val intentConversationId = if (spontaneousNotification == null) intent?.getStringExtra("conversationId") else null
             val intentWebServerSettings = intent?.getBooleanExtra("webServerSettings", false) == true
+            val intentOpenMcpSettings = intent?.getBooleanExtra("openMcpSettings", false) == true
             pendingTextSelection = intent?.readQuickAskContinuationData()
             pendingShareIntent = intent?.readResolvedSharePayload()
             lifecycleScope.launch {
@@ -380,6 +381,12 @@ class RouteActivity : ComponentActivity() {
                         LaunchedEffect(intentWebServerSettings) {
                             if (intentWebServerSettings) {
                                 navStack.navigate(Screen.SettingWeb)
+                            }
+                        }
+
+                        LaunchedEffect(intentOpenMcpSettings) {
+                            if (intentOpenMcpSettings) {
+                                navStack.navigate(Screen.SettingMcp)
                             }
                         }
                     }
@@ -624,6 +631,11 @@ class RouteActivity : ComponentActivity() {
 
         if (intent.getBooleanExtra("webServerSettings", false)) {
             navStack?.navigate(Screen.SettingWeb)
+            return
+        }
+
+        if (intent.getBooleanExtra("openMcpSettings", false)) {
+            navStack?.navigate(Screen.SettingMcp)
             return
         }
 

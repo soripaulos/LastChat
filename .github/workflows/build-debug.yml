@@ -1,0 +1,49 @@
+name: Debug Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/oauth-mcp-lastchat-apk-tm9p2i
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      # The app module applies the google-services and firebase-crashlytics plugins, which fail
+      # the build (processDebugGoogleServices) if app/google-services.json is missing — so it's
+      # written from a secret here just like release.yml does. The debug build type uses the
+      # auto-generated debug keystore, so no signing secrets are needed.
+      - name: Write google-services.json
+        run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/*.apk

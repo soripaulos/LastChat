@@ -24,7 +24,10 @@ import me.rerere.rikkahub.data.datastore.SecretKeyManager
 import me.rerere.rikkahub.data.datastore.SpontaneousMessagingStateStore
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.Migration_6_7
+import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStore
 import me.rerere.rikkahub.data.sync.WebdavSync
 import me.rerere.rikkahub.utils.appLocale
 import androidx.work.WorkManager
@@ -123,7 +126,25 @@ val dataSourceModule = module {
         get<AppDatabase>().usageStatsDao()
     }
 
-    single { McpManager(settingsStore = get(), appScope = get()) }
+    single { McpOAuthStore(context = get(), json = get()) }
+    single {
+        McpOAuthManager(
+            context = get(),
+            scope = get<AppScope>(),
+            client = get(),
+            json = get(),
+            store = get(),
+        )
+    }
+
+    single {
+        McpManager(
+            context = get(),
+            settingsStore = get(),
+            appScope = get(),
+            oauthManager = get(),
+        )
+    }
 
     single {
         GenerationHandler(

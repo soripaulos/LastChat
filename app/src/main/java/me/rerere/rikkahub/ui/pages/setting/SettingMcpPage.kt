@@ -50,6 +50,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import me.rerere.rikkahub.ui.components.ui.HapticSwitch
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.Icons
@@ -92,8 +94,11 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.mcp.McpCommonOptions
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.mcp.McpOAuthConfig
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.mcp.McpStatus
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthManager
+import me.rerere.rikkahub.data.ai.mcp.oauth.McpOAuthStatus
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.nav.OneUITopAppBar
 import me.rerere.rikkahub.ui.components.ui.FormItem
@@ -116,26 +121,22 @@ import org.koin.compose.koinInject
 fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val mcpConfigs = settings.mcpServers
-    val creationState = useEditState<McpServerConfig> {
-        vm.updateSettings(
-            settings.copy(
-                mcpServers = mcpConfigs + it
-            )
-        )
+    val oauthManager = koinInject<McpOAuthManager>()
+    // Upsert by id so saving (or persisting a draft before OAuth sign-in) is idempotent and
+    // never creates a duplicate server for the same id. Reads vm.settings.value rather than the
+    // captured `settings` snapshot so a draft persisted mid-edit isn't clobbered by a stale copy.
+    val persistServer: (McpServerConfig) -> Unit = { cfg ->
+        val current = vm.settings.value.mcpServers
+        val updated = if (current.any { it.id == cfg.id }) {
+            current.map { if (it.id == cfg.id) cfg else it }
+        } else {
+            current + cfg
+        }
+        vm.updateSettings(vm.settings.value.copy(mcpServers = updated))
     }
-    val editState = useEditState<McpServerConfig> { newConfig ->
-        vm.updateSettings(
-            settings.copy(
-                mcpServers = mcpConfigs.map {
-                    if (it.id == newConfig.id) {
-                        newConfig
-                    } else {
-                        it
-                    }
-                }
-            ))
-    }
-    
+    val creationState = useEditState<McpServerConfig>(onUpdate = persistServer)
+    val editState = useEditState<McpServerConfig>(onUpdate = persistServer)
+
     // Delete confirmation state - at function level so accessible by dialog
     var showDeleteDialog by remember { mutableStateOf(false) }
     var mcpToDelete by remember { mutableStateOf<McpServerConfig?>(null) }
@@ -313,6 +314,7 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
                 TextButton(
                     onClick = {
                         mcpToDelete?.let { mcp ->
+                            oauthManager.signOut(mcp.id.toString())
                             vm.updateSettings(
                                 settings.copy(
                                     mcpServers = mcpConfigs.filter { it.id != mcp.id }
@@ -328,8 +330,8 @@ fun SettingMcpPage(vm: SettingVM = koinViewModel()) {
             }
         )
     }
-    McpServerConfigModal(creationState)
-    McpServerConfigModal(editState)
+    McpServerConfigModal(creationState, onPersist = persistServer)
+    McpServerConfigModal(editState, onPersist = persistServer)
     if (showImportDialog) {
         McpImportModal(
             onDismiss = { showImportDialog = false },
@@ -483,7 +485,10 @@ private fun McpServerItem(
 
 
 @Composable
-private fun McpServerConfigModal(state: EditState<McpServerConfig>) {
+private fun McpServerConfigModal(
+    state: EditState<McpServerConfig>,
+    onPersist: (McpServerConfig) -> Unit,
+) {
     state.EditStateContent { config, updateValue ->
         val pagerState = rememberPagerState { 2 }
         val scope = rememberCoroutineScope()
@@ -552,7 +557,8 @@ containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceCon
                         0 -> {
                             McpCommonOptionsConfigure(
                                 config = config,
-                                update = updateValue
+                                update = updateValue,
+                                onPersist = onPersist,
                             )
                         }
 
@@ -586,7 +592,8 @@ containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceCon
 @Composable
 private fun McpCommonOptionsConfigure(
     config: McpServerConfig,
-    update: (McpServerConfig) -> Unit
+    update: (McpServerConfig) -> Unit,
+    onPersist: (McpServerConfig) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -769,6 +776,15 @@ private fun McpCommonOptionsConfigure(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        HorizontalDivider()
+
+        // OAuth 认证
+        McpOAuthSection(config = config, update = update, onPersist = onPersist)
+
+        HorizontalDivider()
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         // 请求头配置
         FormItem(
             label = {
@@ -888,6 +904,125 @@ private fun McpCommonOptionsConfigure(
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.setting_mcp_page_add_header))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun McpOAuthSection(
+    config: McpServerConfig,
+    update: (McpServerConfig) -> Unit,
+    onPersist: (McpServerConfig) -> Unit,
+) {
+    val oauthManager = koinInject<McpOAuthManager>()
+    val serverId = config.id.toString()
+    val oauthEnabled = config.commonOptions.oauth?.enabled == true
+    val status by oauthManager.statusFor(serverId)
+        .collectAsStateWithLifecycle(initialValue = oauthManager.currentStatus(serverId))
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_mcp_page_oauth)) },
+        description = { Text(stringResource(R.string.setting_mcp_page_oauth_desc)) }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.setting_mcp_page_oauth))
+                Spacer(Modifier.weight(1f))
+                Switch(
+                    checked = oauthEnabled,
+                    onCheckedChange = { enabled ->
+                        update(
+                            config.clone(
+                                commonOptions = config.commonOptions.copy(
+                                    oauth = McpOAuthConfig(
+                                        enabled = enabled,
+                                        scope = config.commonOptions.oauth?.scope.orEmpty(),
+                                    )
+                                )
+                            )
+                        )
+                    }
+                )
+            }
+
+            if (oauthEnabled) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (val s = status) {
+                        McpOAuthStatus.Authorizing -> {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            Text(
+                                text = stringResource(R.string.setting_mcp_page_oauth_status_authorizing),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+
+                        McpOAuthStatus.Authorized -> Text(
+                            text = stringResource(R.string.setting_mcp_page_oauth_status_authorized),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.extendColors.green6,
+                        )
+
+                        is McpOAuthStatus.Error -> Text(
+                            text = s.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+
+                        McpOAuthStatus.Idle -> Text(
+                            text = stringResource(R.string.setting_mcp_page_oauth_status_idle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                val authorized = status is McpOAuthStatus.Authorized
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            // Persist the draft (with OAuth enabled) before the browser opens,
+                            // so the server survives the app being backgrounded and reconnects
+                            // automatically once sign-in completes.
+                            val toAuthorize = config.clone(
+                                commonOptions = config.commonOptions.copy(
+                                    oauth = McpOAuthConfig(
+                                        enabled = true,
+                                        scope = config.commonOptions.oauth?.scope.orEmpty(),
+                                    )
+                                )
+                            )
+                            onPersist(toAuthorize)
+                            oauthManager.startLogin(toAuthorize)
+                        },
+                        enabled = status != McpOAuthStatus.Authorizing,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            stringResource(
+                                if (authorized) R.string.setting_mcp_page_oauth_reauthorize
+                                else R.string.setting_mcp_page_oauth_authorize
+                            )
+                        )
+                    }
+                    if (authorized) {
+                        TextButton(onClick = { oauthManager.signOut(serverId) }) {
+                            Text(stringResource(R.string.setting_mcp_page_oauth_signout))
+                        }
+                    }
                 }
             }
         }

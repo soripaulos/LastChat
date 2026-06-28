@@ -106,6 +106,24 @@
         </intent-filter>
     </activity>
 
+    <activity
+        android:name=".ui.activity.McpOAuthRedirectActivity"
+        android:exported="true"
+        android:theme="@android:style/Theme.Translucent.NoTitleBar"
+        tools:ignore="Instantiatable">
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+
+            <data
+                android:scheme="lastchat"
+                android:host="mcp"
+                android:path="/oauth" />
+        </intent-filter>
+    </activity>
+
     <!-- Text Selection Integration - "Ask LastChat" in system text selection menu -->
     <activity
         android:name=".ui.activity.TextSelectionActivity"
