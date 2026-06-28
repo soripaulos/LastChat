@@ -1813,4 +1813,6 @@
   <string name="codex_response_failed">The Codex response failed.</string>
   <string name="codex_monthly_limit">Monthly limit</string>
   <string name="codex_oauth_ports_unavailable">Codex sign-in cannot start because the local callback ports are in use. Close the app using them and try again.</string>
+  <string name="widget_assistant_name">Assistant Shortcut</string>
+  <string name="widget_assistant_description">Quick access to chat with an assistant</string>
 </resources>
