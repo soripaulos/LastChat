@@ -21,6 +21,20 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+
+      # The :app module's buildWebUi task (a preBuild dependency) runs `npm run build` in
+      # web-ui/, but it does not install dependencies itself, so node_modules must already be
+      # present before the Gradle build runs.
+      - name: Install web-ui dependencies
+        working-directory: web-ui
+        run: npm ci
+
       - name: Gradle cache
         uses: actions/cache@v4
         with:
@@ -30,11 +44,14 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
       # The app module applies the google-services and firebase-crashlytics plugins, which fail
-      # the build (processDebugGoogleServices) if app/google-services.json is missing — so it's
-      # written from a secret here just like release.yml does. The debug build type uses the
-      # auto-generated debug keystore, so no signing secrets are needed.
-      - name: Write google-services.json
-        run: echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+      # the build (processDebugGoogleServices) if app/google-services.json is missing. A debug
+      # APK only needs the file to be structurally valid with a client matching the applicationId
+      # (lastchat.rikkafork.cocolal, plus the .debug suffix), so a stub is written here — no real
+      # Firebase project or secrets are required, and the debug build type uses the auto-generated
+      # debug keystore so no signing secrets are needed either.
+      - name: Write stub google-services.json
+        run: |
+          echo '{"project_info":{"project_number":"000000000000","project_id":"lastchat-debug","storage_bucket":"lastchat-debug.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000","android_client_info":{"package_name":"lastchat.rikkafork.cocolal"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY000"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}},{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000001","android_client_info":{"package_name":"lastchat.rikkafork.cocolal.debug"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY001"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > app/google-services.json
 
       - name: Build debug APK
         run: |
